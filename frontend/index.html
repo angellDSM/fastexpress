@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FastExpress · Cotizador de envíos</title>
+  <style>
+    :root {
+      --bg: #f4f6f8; --card: #ffffff; --ink: #1d2733; --muted: #5d6b7a;
+      --brand: #0b6e4f; --brand-dark: #08553d; --error: #b42318; --line: #d9dee4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px;
+    }
+    main { width: 100%; max-width: 460px; }
+    header { margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 1.6rem; color: var(--brand); }
+    header p { margin: 4px 0 0; color: var(--muted); }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px;
+    }
+    label { display: block; font-weight: 600; margin: 16px 0 6px; }
+    label:first-child { margin-top: 0; }
+    input, select {
+      width: 100%; padding: 10px 12px; font-size: 1rem; border: 1px solid var(--line);
+      border-radius: 8px; background: #fff; color: var(--ink);
+    }
+    input:focus, select:focus { outline: 2px solid var(--brand); border-color: transparent; }
+    .hint { font-size: .85rem; color: var(--muted); margin-top: 4px; }
+    .field-error { font-size: .85rem; color: var(--error); margin-top: 4px; min-height: 1em; }
+    button {
+      margin-top: 22px; width: 100%; padding: 12px; font-size: 1rem; font-weight: 600;
+      background: var(--brand); color: #fff; border: 0; border-radius: 8px; cursor: pointer;
+    }
+    button:hover { background: var(--brand-dark); }
+    button:disabled { opacity: .6; cursor: wait; }
+    #resultado { margin-top: 20px; }
+    .alerta {
+      padding: 12px 14px; border-radius: 8px; background: #fdecea; color: var(--error);
+      border: 1px solid #f5c2bd;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 8px 0; border-bottom: 1px solid var(--line); }
+    td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    tr.total td { font-weight: 700; font-size: 1.15rem; border-bottom: 0; color: var(--brand); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>FastExpress</h1>
+    <p>Cotización de envíos y descuentos</p>
+  </header>
+
+  <form id="form-cotizar" class="card" novalidate>
+    <label for="peso">Peso del paquete (kg)</label>
+    <input id="peso" name="peso" type="number" step="0.01" min="0.01" max="20" placeholder="Ej. 10.5" required>
+    <div class="hint">Entre 0.01 y 20.00 kg</div>
+    <div class="field-error" id="error-peso"></div>
+
+    <label for="tipo_cliente">Tipo de cliente</label>
+    <select id="tipo_cliente" name="tipo_cliente" required>
+      <option value="">Selecciona…</option>
+      <option value="NUEVO">Nuevo (0 % descuento)</option>
+      <option value="FRECUENTE">Frecuente (10 % descuento)</option>
+      <option value="VIP">VIP (20 % descuento)</option>
+    </select>
+    <div class="field-error" id="error-cliente"></div>
+
+    <label for="tipo_envio">Tipo de envío</label>
+    <select id="tipo_envio" name="tipo_envio" required>
+      <option value="">Selecciona…</option>
+      <option value="ESTANDAR">Estándar (sin recargo)</option>
+      <option value="EXPRESS">Express (+25 %)</option>
+    </select>
+    <div class="field-error" id="error-envio"></div>
+
+    <button type="submit" id="btn">Cotizar envío</button>
+  </form>
+
+  <section id="resultado" aria-live="polite"></section>
+</main>
+
+<script>
+  const form = document.getElementById("form-cotizar");
+  const btn = document.getElementById("btn");
+  const resultado = document.getElementById("resultado");
+  const usd = n => "$" + Number(n).toFixed(2);
+
+  // Validaciones básicas en el cliente (la API vuelve a validar todo)
+  function validar(peso, cliente, envio) {
+    const errores = {};
+    if (peso === "" || isNaN(Number(peso))) errores.peso = "Ingresa un peso numérico.";
+    else if (Number(peso) < 0.01) errores.peso = "El peso mínimo es 0.01 kg.";
+    else if (Number(peso) > 20) errores.peso = "Límite excedido: el máximo es 20.00 kg.";
+    if (!cliente) errores.cliente = "Selecciona el tipo de cliente.";
+    if (!envio) errores.envio = "Selecciona el tipo de envío.";
+    return errores;
+  }
+
+  function mostrarErrores(errores) {
+    document.getElementById("error-peso").textContent = errores.peso || "";
+    document.getElementById("error-cliente").textContent = errores.cliente || "";
+    document.getElementById("error-envio").textContent = errores.envio || "";
+  }
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const peso = form.peso.value.trim();
+    const tipo_cliente = form.tipo_cliente.value;
+    const tipo_envio = form.tipo_envio.value;
+
+    const errores = validar(peso, tipo_cliente, tipo_envio);
+    mostrarErrores(errores);
+    resultado.innerHTML = "";
+    if (Object.keys(errores).length) return;
+
+    btn.disabled = true;
+    btn.textContent = "Calculando…";
+    try {
+      const resp = await fetch("/api/cotizar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ peso: Number(peso), tipo_cliente, tipo_envio })
+      });
+      const datos = await resp.json();
+      if (!resp.ok) {
+        resultado.innerHTML = `<div class="alerta">${datos.error || "No se pudo cotizar el envío."}</div>`;
+        return;
+      }
+      resultado.innerHTML = `
+        <div class="card">
+          <table>
+            <tr><td>Subtotal (base $5.00 + peso)</td><td>${usd(datos.subtotal)}</td></tr>
+            <tr><td>Descuento por cliente</td><td>− ${usd(datos.descuento)}</td></tr>
+            <tr><td>Recargo por envío</td><td>+ ${usd(datos.recargo)}</td></tr>
+            <tr class="total"><td>Total a pagar</td><td>${usd(datos.total)}</td></tr>
+          </table>
+        </div>`;
+    } catch (e) {
+      resultado.innerHTML = `<div class="alerta">No hay conexión con el servidor.</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Cotizar envío";
+    }
+  });
+</script>
+</body>
+</html>
